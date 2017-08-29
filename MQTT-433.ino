@@ -117,16 +117,16 @@ void loop()
   // Receive loop, if data received by RF433 send it by MQTT to MQTTsubject
   if (mySwitch.available()) {
     // Topic on which we will send data
-    long value = mySwitch.getReceivedValue();
-    char buf[16];
-    sprintf_P(buf, PSTR("0x%x"), value);
+    unsigned long value = mySwitch.getReceivedValue();
+    char buf[16] = "";
+    snprintf(buf, sizeof(buf), "0x%x", value);
     Serial.println(buf);
     mySwitch.resetAvailable();
     if (client.connected()) {
-      client.publish_P(PSTR("command/rfgw"), buf, sizeof(buf), true);
+      client.publish("command/rfgw", buf, sizeof(buf), true);
     } else {
       if (reconnect()) {
-        client.publish_P(PSTR("command/rfgw"), buf, sizeof(buf), true);
+        client.publish("command/rfgw", buf, sizeof(buf), true);
         lastReconnectAttempt = 0;
       }
     }
