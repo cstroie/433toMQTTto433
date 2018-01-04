@@ -42,7 +42,7 @@
 */
 #include <UIPEthernet.h>
 #include <PubSubClient.h>
-#include <RCSwitch.h> // library for controling Radio frequency switch
+#include <RCSwitch.h>
 #include <SPI.h>
 
 RCSwitch mySwitch = RCSwitch();
@@ -53,20 +53,22 @@ static const byte server[]  = { 10, 200,   4, 250};
 static const byte ip[]      = { 10, 200,   4, 140};
 static const byte subnet[]  = {255, 255, 255,   0};
 
-//adding this to bypass to problem of the arduino builder issue 50
-void callback(char*topic, byte* payload, unsigned int length);
+// Adding this to bypass to problem of the arduino builder issue 50
+void callback(char* topic, byte* payload, unsigned int length);
 EthernetClient ethClient;
 
-// client parameters
+// Client parameters
 PubSubClient client(server, 1883, callback, ethClient);
+const char topicRx[] = "mqtt433/rx";
+const char topicTx[] = "mqtt433/tx";
 
-//MQTT last attemps reconnection number
+// MQTT last attemps reconnection number
 long lastReconnectAttempt = 0;
 
 boolean reconnect() {
   if (client.connect("MQTT-433")) {
     // Topic subscribed so as to get data
-    client.subscribe("command/MQTT-433/");
+    client.subscribe(topicTx);
   }
   return client.connected();
 }
@@ -91,15 +93,14 @@ void setup() {
   pinMode(9, OUTPUT);
   digitalWrite(9, LOW);
 
-  mySwitch.enableTransmit(10); // RF Transmitter is connected to Arduino Pin #10
-  mySwitch.setRepeatTransmit(10); //increase transmit repeat to avoid lost of rf sendings
-  mySwitch.enableReceive(0);  // Receiver on inerrupt 0 => that is pin #2
-  mySwitch.setPulseLength(189);  //RF Pulse Length, varies per device.
+  mySwitch.enableTransmit(8);     // RF Transmitter is connected to Arduino Pin #8
+  mySwitch.setRepeatTransmit(10); // Increase transmit repeat to avoid lost of rf sendings
+  mySwitch.enableReceive(0);      // Receiver on inerrupt 0 => that is pin #2
+  mySwitch.setPulseLength(189);   // RF Pulse Length, varies per device.
 }
 
-void loop()
-{
-  //MQTT client connexion management
+void loop() {
+  // MQTT client connection management
   if (!client.connected()) {
     long now = millis();
     if (now - lastReconnectAttempt > 5000) {
@@ -119,14 +120,15 @@ void loop()
     // Topic on which we will send data
     unsigned long value = mySwitch.getReceivedValue();
     char buf[16] = "";
-    snprintf(buf, sizeof(buf), "0x%x", value);
+    //ltoa(value, (char*)buf, 16);
+    ltoa(value, (char*)buf, 10);
     Serial.println(buf);
     mySwitch.resetAvailable();
     if (client.connected()) {
-      client.publish("command/rfgw", buf, sizeof(buf), true);
+      client.publish(topicRx, buf, sizeof(buf), true);
     } else {
       if (reconnect()) {
-        client.publish("command/rfgw", buf, sizeof(buf), true);
+        client.publish(topicRx, buf, sizeof(buf), true);
         lastReconnectAttempt = 0;
       }
     }
