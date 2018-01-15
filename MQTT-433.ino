@@ -1,7 +1,7 @@
 /*
-  MQTT-433  - Arduino program for home automation
+  MQTT-433 - Arduino program for home automation
 
-   Act as a gateway between your nodes and a MQTT broker
+  Act as a gateway between your nodes and a MQTT broker
   Send and receiving command by MQTT
 
   This program enables to:
@@ -40,98 +40,143 @@
   Send data by MQTT to convert it on RF signal
   mosquitto_pub -t home/MQTTto433/ -m 1315153
 */
+
+/*
+  SWITCHES = {0x004000, 0x010000, 0x040000, 0x100000, 0x400000}
+  ON  = {A = 0x000551, B = 0x001151, C = 0x001451, D = 0x001511}
+  OFF = {A = 0x000554, B = 0x001154, C = 0x001454, D = 0x00155f}
+*/
+
 #include <UIPEthernet.h>
 #include <PubSubClient.h>
 #include <RCSwitch.h>
 #include <SPI.h>
 
-RCSwitch mySwitch = RCSwitch();
+// The RC Switch
+RCSwitch rcs = RCSwitch();
 
 // Update these with values suitable for your network.
 static const byte mac[]     = {0xDE, 0xED, 0xBA, 0xFE, 0x34, 0x99};
-static const byte server[]  = { 10, 200,   4, 250};
 static const byte ip[]      = { 10, 200,   4, 140};
+static const byte gw[]      = { 10, 200,   4, 250};
 static const byte subnet[]  = {255, 255, 255,   0};
+static const byte server[]  = { 10, 200,   4, 250};
 
 // Adding this to bypass to problem of the arduino builder issue 50
-void callback(char* topic, byte* payload, unsigned int length);
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 EthernetClient ethClient;
 
 // Client parameters
-PubSubClient client(server, 1883, callback, ethClient);
-const char topicRx[] = "mqtt433/rx";
-const char topicTx[] = "mqtt433/tx";
+PubSubClient mqttClient(server, 1883, mqttCallback, ethClient);
+const char          mqttId[]      = "MQTT-433";             // MQTT client ID
+const char          mqttTopic[]   = "mqtt433";
+const char          mqttTopicRx[] = "rx";
+const char          mqttTopicTx[] = "tx";
+const unsigned long mqttDelay     = 5000UL;                 // Delay between reconnection attempts
+unsigned long       mqttNextTime  = 0UL;                    // Next time to reconnect
 
-// MQTT last attemps reconnection number
-long lastReconnectAttempt = 0;
 
-boolean reconnect() {
-  if (client.connect("MQTT-433")) {
-    // Topic subscribed so as to get data
-    client.subscribe(topicTx);
+/**
+  Subscribe to topic/# or topic/subtopic/#
+*/
+void mqttSubscribeAll(const char *lvl1, const char *lvl2 = NULL) {
+  char buf[16];
+  strcpy(buf, lvl1);
+  if (lvl2 != NULL) {
+    strcat_P(buf, PSTR("/"));
+    strcat(buf, lvl2);
   }
-  return client.connected();
+  strcat_P(buf, PSTR("/#"));
+  mqttClient.subscribe(buf);
 }
 
-// Callback function, when the gateway receive an MQTT value on the topics subscribed this function is called
-void callback(char* topic, byte* payload, unsigned int length) {
-  long data = atol(payload);
-  digitalWrite(9, HIGH);
-  mySwitch.send(data, 24);
-  digitalWrite(9, LOW);
+/**
+  Message arrived in MQTT subscribed topics
+
+  @param topic the topic the message arrived on (const char[])
+  @param payload the message payload (byte array)
+  @param length the length of the message payload (unsigned int)
+*/
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  // Make a limited copy of the payload and make sure it ends with \0
+  char message[16];
+  if (length > 16) length = 16;
+  memcpy(message, payload, length);
+  message[length] = '\0';
+
+  // Using int16_t should be sufficient for everybody
+  uint32_t data = atoi(message);
+  rcs.send(data, 24);
+}
+
+/**
+  Publish char array to topic
+*/
+boolean mqttPub(const char *payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
+  char buf[16];
+  strcpy(buf, lvl1);
+  if (lvl2 != NULL) {
+    strcat_P(buf, PSTR("/"));
+    strcat(buf, lvl2);
+  }
+  if (lvl3 != NULL) {
+    strcat_P(buf, PSTR("/"));
+    strcat(buf, lvl3);
+  }
+  return mqttClient.publish(buf, payload, retain);
+}
+
+/**
+  Publish integer to topic
+*/
+boolean mqttPub(const long payload, const char *lvl1, const char *lvl2 = NULL, const char *lvl3 = NULL, const boolean retain = false) {
+  char buf[16];
+  sprintf_P(buf, PSTR("%d"), payload);
+  return mqttPub(buf, lvl1, lvl2, lvl3, retain);
+}
+
+/**
+  Try to reconnect to MQTT server
+
+  @return boolean reconnection success
+*/
+boolean mqttReconnect() {
+  if (mqttClient.connect(mqttId, mqttTopic, 0, true, "offline")) {
+    // Publish the "online" status
+    mqttClient.publish(mqttTopic, "online");
+    // Subscribe
+    mqttSubscribeAll(mqttTopic, mqttTopicTx);
+  }
+  return mqttClient.connected();
 }
 
 void setup() {
-  //Launch serial for debugging purposes
+  // Launch serial for debugging purposes
   Serial.begin(9600);
-  //Begining ethernet connection
-  Ethernet.begin(mac, ip, subnet);
+  // Begining ethernet connection
+  Ethernet.begin(mac, ip, gw, gw, subnet);
   delay(1500);
-  lastReconnectAttempt = 0;
 
-  // RF transmitter is connected to this pin 9, we activate it only when sending RF data to avoid conflict between transmitter and receiver
-  pinMode(9, OUTPUT);
-  digitalWrite(9, LOW);
-
-  mySwitch.enableTransmit(8);     // RF Transmitter is connected to Arduino Pin #8
-  mySwitch.setRepeatTransmit(10); // Increase transmit repeat to avoid lost of rf sendings
-  mySwitch.enableReceive(0);      // Receiver on inerrupt 0 => that is pin #2
-  mySwitch.setPulseLength(189);   // RF Pulse Length, varies per device.
+  rcs.enableTransmit(8);     // RF Transmitter is connected to Arduino Pin #8
+  rcs.setRepeatTransmit(10); // Increase transmit repeat to avoid lost of rf sendings
+  rcs.enableReceive(0);      // Receiver on inerrupt 0 => that is pin #2
+  //rcs.setPulseLength(320); // RF Pulse Length, varies per device.
 }
 
 void loop() {
-  // MQTT client connection management
-  if (!client.connected()) {
-    long now = millis();
-    if (now - lastReconnectAttempt > 5000) {
-      lastReconnectAttempt = now;
-      // Attempt to reconnect
-      if (reconnect()) {
-        lastReconnectAttempt = 0;
-      }
-    }
-  } else {
-    // MQTT loop
-    client.loop();
-  }
+  // Process incoming MQTT messages and maintain connection
+  if (!mqttClient.loop())
+    // Not connected, check if it's time to reconnect
+    if (millis() >= mqttNextTime)
+      // Try to reconnect every mqttDelay seconds
+      if (!mqttReconnect()) mqttNextTime = millis() + mqttDelay;
 
   // Receive loop, if data received by RF433 send it by MQTT to MQTTsubject
-  if (mySwitch.available()) {
+  if (rcs.available()) {
     // Topic on which we will send data
-    unsigned long value = mySwitch.getReceivedValue();
-    char buf[16] = "";
-    //ltoa(value, (char*)buf, 16);
-    ltoa(value, (char*)buf, 10);
-    Serial.println(buf);
-    mySwitch.resetAvailable();
-    if (client.connected()) {
-      client.publish(topicRx, buf, sizeof(buf), true);
-    } else {
-      if (reconnect()) {
-        client.publish(topicRx, buf, sizeof(buf), true);
-        lastReconnectAttempt = 0;
-      }
-    }
+    unsigned long value = rcs.getReceivedValue();
+    Serial.println(value);
+    rcs.resetAvailable();
+    mqttPub(value, mqttTopic, mqttTopicRx, NULL, false);
   }
 }
-
