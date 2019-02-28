@@ -104,7 +104,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   memcpy(message, payload, length);
   message[length] = '\0';
 
-  // Using int16_t should be sufficient for everybody
+  // Using int32_t should be sufficient for everybody
   uint32_t data = atoi(message);
   rcs.send(data, 24);
 }
@@ -153,12 +153,12 @@ boolean mqttReconnect() {
 void setup() {
   // Launch serial for debugging purposes
   Serial.begin(9600);
-  // Begining ethernet connection
+  // Begin ethernet connection
   Ethernet.begin(mac, ip, gw, gw, subnet);
   delay(1500);
 
   rcs.enableTransmit(8);     // RF Transmitter is connected to Arduino Pin #8
-  rcs.setRepeatTransmit(10); // Increase transmit repeat to avoid lost of rf sendings
+  rcs.setRepeatTransmit(16); // Increase transmit repeat to avoid lost of rf sendings
   rcs.enableReceive(0);      // Receiver on inerrupt 0 => that is pin #2
   //rcs.setPulseLength(320); // RF Pulse Length, varies per device.
 }
